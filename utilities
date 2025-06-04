@@ -1,0 +1,194 @@
+    if hasattr(chart, 'series'):
+        area_series_color_index = 0 
+        for series_obj in chart.series: # Renamed to series_obj to avoid conflict
+            series_name = series_obj.name # Get the name of the series in the chart
+
+            # Default color from extended palette
+            default_color = PPT_EXTENDED_RGB_COLORS[area_series_color_index % len(PPT_EXTENDED_RGB_COLORS)] if PPT_EXTENDED_RGB_COLORS else RGBColor.from_string("808080")
+
+            # --- Specific Styling for cht_cashflows ---
+            if chart_name_for_logging == "cht_cashflows":
+                if series_name == 'Contributions':
+                    current_series_color = RGBColor.from_string("FF4713") # Example: Aladdin Red/Orange
+                    if series_obj.format.fill:
+                        series_obj.format.fill.solid()
+                        series_obj.format.fill.fore_color.rgb = current_series_color
+                    if hasattr(series_obj, 'marker') and series_obj.marker: # Bars shouldn't have markers
+                        series_obj.marker.style = XL_MARKER_STYLE.NONE
+                elif series_name == 'Distributions':
+                    current_series_color = RGBColor.from_string("0088C5") # Example: Aladdin Blue
+                    if series_obj.format.fill:
+                        series_obj.format.fill.solid()
+                        series_obj.format.fill.fore_color.rgb = current_series_color
+                    if hasattr(series_obj, 'marker') and series_obj.marker:
+                        series_obj.marker.style = XL_MARKER_STYLE.NONE
+                elif series_name == 'Cumulative Net Cashflow':
+                    current_series_color = RGBColor.from_string("FFCE00") # Example: Aladdin Yellow/Gold
+                    if series_obj.format.line:
+                        series_obj.format.line.color.rgb = current_series_color
+                        series_obj.format.line.width = Pt(2.0)
+                    if series_obj.format.fill: # Line series shouldn't have fill
+                        series_obj.format.fill.no_fill()
+                    if hasattr(series_obj, 'marker') and series_obj.marker: # Optional markers
+                        series_obj.marker.style = XL_MARKER_STYLE.CIRCLE
+                        series_obj.marker.size = 5
+                        series_obj.marker.format.fill.solid()
+                        series_obj.marker.format.fill.fore_color.rgb = current_series_color
+                        series_obj.marker.format.line.color.rgb = current_series_color
+                elif series_name == 'Liquidity Limit':
+                    current_series_color = RGBColor.from_string("A9A9A9") # Dark Gray
+                    if series_obj.format.line:
+                        series_obj.format.line.color.rgb = current_series_color
+                        series_obj.format.line.width = Pt(1.5)
+                        series_obj.format.line.dash_style = XL_DASH_STYLE.DASH # Dashed line
+                    if series_obj.format.fill:
+                        series_obj.format.fill.no_fill()
+                    if hasattr(series_obj, 'marker') and series_obj.marker: # Typically no markers for limit line
+                        series_obj.marker.style = XL_MARKER_STYLE.NONE
+                else: # Fallback for any other series in cht_cashflows (should not happen if data is specific)
+                    if series_obj.format.fill: series_obj.format.fill.solid(); series_obj.format.fill.fore_color.rgb = default_color
+                    if series_obj.format.line: series_obj.format.line.color.rgb = default_color
+                
+                if series_name not in ['Contributions', 'Distributions', 'Cumulative Net Cashflow', 'Liquidity Limit']:
+                    area_series_color_index +=1 # Increment only for non-explicitly colored series
+
+            # --- Styling for cht_nav_forecast (Target NAV Line vs Areas) ---
+            elif chart_name_for_logging == "cht_nav_forecast" and series_name == 'Target NAV (Line)':
+                target_line_color = RGBColor.from_string("0A0A0A") # Near black
+                if series_obj.format.line:
+                    series_obj.format.line.color.rgb = target_line_color
+                    series_obj.format.line.width = Pt(2.0)
+                if series_obj.format.fill: series_obj.format.fill.no_fill()
+                if hasattr(series_obj, 'marker') and series_obj.marker:
+                    series_obj.marker.style = XL_MARKER_STYLE.CIRCLE 
+                    series_obj.marker.size = 5
+                    if hasattr(series_obj.marker.format, 'fill'): series_obj.marker.format.fill.solid(); series_obj.marker.format.fill.fore_color.rgb = target_line_color
+                    if hasattr(series_obj.marker.format, 'line'): series_obj.marker.format.line.color.rgb = target_line_color
+                area_series_color_index +=1 # Increment to keep other series colors cycling if this logic is refined
+            
+            # --- Default Styling for other charts (Area series, etc.) ---
+            else: # Includes AssetClass_Vintage series for cht_nav_forecast and other charts
+                if series_obj.format.fill:
+                    series_obj.format.fill.solid()
+                    series_obj.format.fill.fore_color.rgb = default_color
+                if series_obj.format.line: # Border for the area or line color
+                    series_obj.format.line.color.rgb = default_color 
+                    series_obj.format.line.width = Pt(0.75)
+                if hasattr(series_obj, 'marker') and series_obj.marker:
+                     series_obj.marker.style = XL_MARKER_STYLE.NONE # No markers for areas by default
+                area_series_color_index += 1
+
+
+
+
+
+        charts_updated_count = 0
+        
+        for config in chart_configs:
+            chart_name_in_template = config["name"]
+            log_name_for_messages = config["log_name"]
+            st.write(f"--- Processing chart: {log_name_for_messages} (Template Name: {chart_name_in_template}) ---")
+            
+            try:
+                chart_data_df = config["data_func"](*config["args"])
+
+                # Basic validation of the prepared DataFrame
+                if not isinstance(chart_data_df, pd.DataFrame) or chart_data_df.empty:
+                    st.warning(f"No data generated or DataFrame is empty for {log_name_for_messages}. Skipping.")
+                    continue
+                # Expecting 'Period' or 'Asset Class' as the first column (categories)
+                if chart_name_in_template == "cht_sub_alloc_target":
+                    if 'Asset Class' not in chart_data_df.columns or chart_data_df.columns[0] != 'Asset Class':
+                        st.warning(f"First column not 'Asset Class' for {log_name_for_messages}. Columns: {list(chart_data_df.columns)}. Skipping.")
+                        continue
+                elif 'Period' not in chart_data_df.columns or chart_data_df.columns[0] != 'Period':
+                    st.warning(f"First column not 'Period' for {log_name_for_messages}. Columns: {list(chart_data_df.columns)}. Skipping.")
+                    continue
+                if len(chart_data_df.columns) < 2:
+                    st.warning(f"Data for {log_name_for_messages} has less than 2 columns (categories + at least one series). Skipping.")
+                    continue
+
+                st.write(f"Data for {log_name_for_messages} (head):"); st.dataframe(chart_data_df.head())
+                
+            except Exception as e:
+                st.error(f"Error during data preparation for {log_name_for_messages}: {str(e)}")
+                import traceback; st.error(traceback.format_exc())
+                continue # Skip to the next chart configuration
+            
+            # Find and update the chart in the presentation
+            chart_found_and_updated_on_any_slide = False
+            for slide_idx, slide in enumerate(prs.slides):
+                for shape in slide.shapes:
+                    if shape.name == chart_name_in_template:
+                        st.write(f"Found shape '{shape.name}' on slide {slide_idx + 1}.")
+                        if not hasattr(shape, 'chart') or shape.chart is None:
+                            st.error(f"Shape '{shape.name}' on slide {slide_idx + 1} is not a chart object or is None.")
+                            continue # Look for other shapes with this name on other slides (though names should be unique)
+                        
+                        try:
+                            st.write(f"Updating chart '{shape.name}' (Data: {log_name_for_messages}) on slide {slide_idx + 1}...")
+                            # Pass the chart name/log name to update_chart_with_data for more specific logging there
+                            update_chart_with_data(shape.chart, chart_data_df, chart_name_for_logging=log_name_for_messages)
+                            st.success(f"Successfully updated chart '{shape.name}' on slide {slide_idx + 1}.")
+                            charts_updated_count += 1
+                            chart_found_and_updated_on_any_slide = True 
+                            break # Processed this named chart, move to next config
+                        except Exception as e:
+                            st.error(f"Error updating chart {shape.name} on slide {slide_idx + 1}: {str(e)}")
+                            import traceback; st.error(traceback.format_exc())
+                            # Continue to see if other shapes on other slides might match,
+                            # or simply break if names are assumed unique per presentation.
+                            # For now, we break after first update attempt (success or fail) for a given name.
+                            chart_found_and_updated_on_any_slide = True # Mark attempt
+                            break 
+                if chart_found_and_updated_on_any_slide:
+                    break # Move to next chart in chart_configs
+            
+            if not chart_found_and_updated_on_any_slide:
+                 st.warning(f"No chart instance named '{chart_name_in_template}' was found and successfully processed in the template.")
+
+        prs.save(output_path)
+        st.write(f"PowerPoint saved to '{output_path}'. Updated {charts_updated_count} chart instances.")
+        return charts_updated_count > 0 # Return True if at least one chart was updated
+        
+    except Exception as e:
+        st.error(f"Critical error in export_cashflow_charts_to_ppt: {str(e)}")
+        import traceback; st.error(traceback.format_exc())
+        return False
+
+
+def export_cashflow_charts_to_ppt(
+    template_path,
+    output_path,
+    # Data arguments required by the prepare_... functions
+    agg_ill_targetnav_np,
+    current_agg_nav_scalar, # Explicitly passed, used by prepare_aggregate_nav_data
+    indv_weights_dict,
+    V_df_data,
+    C_df_data,            # For cht_cashflows
+    D_df_data,            # For cht_cashflows
+    liqlims_data_arr,     # For cht_cashflows
+    T_periods,
+    # Contextual arguments that some prepare_... functions might take
+    existing_portfolio_df, # For prepare_aggregate_nav_data
+    granularity_str         # For prepare_sub_allocation_pm_data, prepare_nav_forecast_data
+    # commitment_plan_df is not directly used by the current set of chart prepare functions,
+    # but pass it if any future chart's data prep needs it.
+):
+
+
+
+success = export_cashflow_charts_to_ppt(
+    template_path=temp_template_path,
+    output_path=output_filename,
+    agg_ill_targetnav_np=agg_ill_targetnav, # from main app state
+    current_agg_nav_scalar=current_agg_nav, # calculated from existing_portfolio_df
+    indv_weights_dict=indv_weights,      # from main app state
+    V_df_data=V_df,                      # from main app state
+    C_df_data=C_df,                      # from main app state
+    D_df_data=D_df,                      # from main app state
+    liqlims_data_arr=liqlims_arr,        # from main app state (ensure it's defined)
+    T_periods=T,                         # from main app state
+    existing_portfolio_df=existing_portfolio_df, # from main app state
+    granularity_str=granularity          # from main app state
+)
