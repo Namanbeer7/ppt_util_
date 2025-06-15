@@ -68,21 +68,30 @@ chart = graphic_frame.chart
 # Save initial version to examine XML
 prs.save('initial_chart.pptx')
 
-# Now let's examine and modify the XML
+# Access the chart XML properly
 chart_part = graphic_frame.chart_part
-chart_element = chart_part.element
+# Get the XML element from the chart part
+chart_xml = chart_part._element
 
 print("\n" + "="*50)
 print("Initial Chart XML Structure:")
 print("="*50)
-print_xml_tree(chart_element)
+print_xml_tree(chart_xml)
 
 # Function to modify chart XML for combo chart
 def create_combo_chart(chart_element):
     """Modify chart XML to create combo chart with stacked areas and line"""
     
+    # Find the chart space element
+    chart_space = chart_element
+    
+    # Find the chart element within chartSpace
+    chart_elem = chart_space.find('.//c:chart', namespaces={
+        'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+    })
+    
     # Find the plot area
-    plotArea = chart_element.find('.//c:plotArea', namespaces={
+    plotArea = chart_elem.find('.//c:plotArea', namespaces={
         'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
     })
     
@@ -90,6 +99,10 @@ def create_combo_chart(chart_element):
     areaChart = plotArea.find('.//c:areaChart', namespaces={
         'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
     })
+    
+    if areaChart is None:
+        print("Area chart not found!")
+        return chart_element
     
     # Create a new line chart element
     lineChart = etree.SubElement(plotArea, qn('c:lineChart'))
@@ -107,29 +120,71 @@ def create_combo_chart(chart_element):
         'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
     })
     
+    print(f"\nFound {len(area_series)} series in area chart")
+    
     # Move the last series to line chart
     if len(area_series) >= n_total_series:
         last_series = area_series[-1]
-        # Remove from area chart
-        areaChart.remove(last_series)
         
-        # Add to line chart
-        lineChart.append(last_series)
+        # Clone the series for line chart (we need to create a new element)
+        # Get series index
+        idx_elem = last_series.find('.//c:idx', namespaces={
+            'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+        })
+        order_elem = last_series.find('.//c:order', namespaces={
+            'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+        })
+        tx_elem = last_series.find('.//c:tx', namespaces={
+            'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+        })
+        cat_elem = last_series.find('.//c:cat', namespaces={
+            'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+        })
+        val_elem = last_series.find('.//c:val', namespaces={
+            'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+        })
         
-        # Add marker settings to the line series
-        marker = etree.SubElement(last_series, qn('c:marker'))
+        # Create new series for line chart
+        line_ser = etree.SubElement(lineChart, qn('c:ser'))
+        
+        # Copy essential elements
+        if idx_elem is not None:
+            new_idx = etree.SubElement(line_ser, qn('c:idx'))
+            new_idx.set('val', idx_elem.get('val'))
+            
+        if order_elem is not None:
+            new_order = etree.SubElement(line_ser, qn('c:order'))
+            new_order.set('val', order_elem.get('val'))
+        
+        # Copy tx (series name)
+        if tx_elem is not None:
+            line_ser.append(etree.fromstring(etree.tostring(tx_elem)))
+            
+        # Add marker settings
+        marker = etree.SubElement(line_ser, qn('c:marker'))
         symbol = etree.SubElement(marker, qn('c:symbol'))
         symbol.set('val', 'circle')
         size = etree.SubElement(marker, qn('c:size'))
         size.set('val', '5')
         
+        # Copy categories
+        if cat_elem is not None:
+            line_ser.append(etree.fromstring(etree.tostring(cat_elem)))
+            
+        # Copy values
+        if val_elem is not None:
+            line_ser.append(etree.fromstring(etree.tostring(val_elem)))
+        
         # Add line properties
-        spPr = etree.SubElement(last_series, qn('c:spPr'))
+        spPr = etree.SubElement(line_ser, qn('c:spPr'))
         ln = etree.SubElement(spPr, qn('a:ln'))
         ln.set('w', '28575')  # line width
         solidFill = etree.SubElement(ln, qn('a:solidFill'))
         srgbClr = etree.SubElement(solidFill, qn('a:srgbClr'))
         srgbClr.set('val', 'FF0000')  # red color for line
+        
+        # Remove from area chart
+        areaChart.remove(last_series)
     
     # Add axes IDs to line chart (must match area chart axes)
     for axId in areaChart.findall('.//c:axId', namespaces={
@@ -145,7 +200,7 @@ def create_combo_chart(chart_element):
     return chart_element
 
 # Modify the chart
-modified_chart = create_combo_chart(chart_element)
+modified_chart = create_combo_chart(chart_xml)
 
 # Save the modified presentation
 prs.save('combo_chart.pptx')
@@ -155,7 +210,10 @@ print("Modified Chart XML Structure (showing key elements):")
 print("="*50)
 
 # Print modified structure focusing on chart types
-plotArea = chart_element.find('.//c:plotArea', namespaces={
+chart_elem = chart_xml.find('.//c:chart', namespaces={
+    'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+})
+plotArea = chart_elem.find('.//c:plotArea', namespaces={
     'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
 })
 
@@ -213,3 +271,18 @@ customize_chart_appearance(prs)
 prs.save('combo_chart_final.pptx')
 
 print("\nFinal customized chart saved as 'combo_chart_final.pptx'")
+
+# Optional: Save the XML for inspection
+print("\n" + "="*50)
+print("Saving XML files for inspection...")
+print("="*50)
+
+# Save initial XML
+with open('initial_chart.xml', 'w', encoding='utf-8') as f:
+    f.write(etree.tostring(chart_xml, pretty_print=True, encoding='unicode'))
+    print("Initial chart XML saved to 'initial_chart.xml'")
+
+# Save modified XML  
+with open('combo_chart.xml', 'w', encoding='utf-8') as f:
+    f.write(etree.tostring(chart_xml, pretty_print=True, encoding='unicode'))
+    print("Modified chart XML saved to 'combo_chart.xml'")
