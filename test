@@ -1,0 +1,215 @@
+import numpy as np
+import pandas as pd
+from pptx import Presentation
+from pptx.util import Inches
+from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE
+from pptx.oxml.ns import qn
+from lxml import etree
+import xml.etree.ElementTree as ET
+
+# Generate dummy data
+np.random.seed(42)
+categories = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+n_categories = len(categories)
+n_area_series = 10
+n_total_series = 11
+
+# Generate data for 10 stacked area series
+area_data = {}
+for i in range(n_area_series):
+    base_value = np.random.randint(20, 50)
+    variation = np.random.randint(-10, 10, n_categories)
+    area_data[f'Area_{i+1}'] = base_value + variation
+
+# Generate data for 1 line series (with higher values to stand out)
+line_data = np.random.randint(200, 300, n_categories)
+area_data['Line_Series'] = line_data
+
+# Create DataFrame for easy viewing
+df = pd.DataFrame(area_data, index=categories)
+print("Generated Data:")
+print(df)
+
+# Function to print XML tree structure
+def print_xml_tree(element, level=0):
+    """Print XML tree structure for analysis"""
+    indent = "  " * level
+    tag = element.tag.split('}')[-1] if '}' in element.tag else element.tag
+    attrs = ' '.join([f'{k}="{v}"' for k, v in element.attrib.items()])
+    if attrs:
+        print(f"{indent}<{tag} {attrs}>")
+    else:
+        print(f"{indent}<{tag}>")
+    
+    for child in element:
+        print_xml_tree(child, level + 1)
+
+# Create presentation
+prs = Presentation()
+slide_layout = prs.slide_layouts[5]  # blank slide
+slide = prs.slides.add_slide(slide_layout)
+
+# Add a chart (start with stacked area chart)
+x, y, cx, cy = Inches(0.5), Inches(0.5), Inches(9), Inches(6)
+chart_data = CategoryChartData()
+chart_data.categories = categories
+
+# Add all series data
+for series_name in area_data.keys():
+    chart_data.add_series(series_name, area_data[series_name])
+
+# Create initial chart as stacked area
+graphic_frame = slide.shapes.add_chart(
+    XL_CHART_TYPE.AREA_STACKED, x, y, cx, cy, chart_data
+)
+chart = graphic_frame.chart
+
+# Save initial version to examine XML
+prs.save('initial_chart.pptx')
+
+# Now let's examine and modify the XML
+chart_part = graphic_frame.chart_part
+chart_element = chart_part.element
+
+print("\n" + "="*50)
+print("Initial Chart XML Structure:")
+print("="*50)
+print_xml_tree(chart_element)
+
+# Function to modify chart XML for combo chart
+def create_combo_chart(chart_element):
+    """Modify chart XML to create combo chart with stacked areas and line"""
+    
+    # Find the plot area
+    plotArea = chart_element.find('.//c:plotArea', namespaces={
+        'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+    })
+    
+    # Find the existing area chart
+    areaChart = plotArea.find('.//c:areaChart', namespaces={
+        'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+    })
+    
+    # Create a new line chart element
+    lineChart = etree.SubElement(plotArea, qn('c:lineChart'))
+    
+    # Add grouping
+    grouping = etree.SubElement(lineChart, qn('c:grouping'))
+    grouping.set('val', 'standard')
+    
+    # Add varyColors
+    varyColors = etree.SubElement(lineChart, qn('c:varyColors'))
+    varyColors.set('val', '0')
+    
+    # Find all series in the area chart
+    area_series = areaChart.findall('.//c:ser', namespaces={
+        'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+    })
+    
+    # Move the last series to line chart
+    if len(area_series) >= n_total_series:
+        last_series = area_series[-1]
+        # Remove from area chart
+        areaChart.remove(last_series)
+        
+        # Add to line chart
+        lineChart.append(last_series)
+        
+        # Add marker settings to the line series
+        marker = etree.SubElement(last_series, qn('c:marker'))
+        symbol = etree.SubElement(marker, qn('c:symbol'))
+        symbol.set('val', 'circle')
+        size = etree.SubElement(marker, qn('c:size'))
+        size.set('val', '5')
+        
+        # Add line properties
+        spPr = etree.SubElement(last_series, qn('c:spPr'))
+        ln = etree.SubElement(spPr, qn('a:ln'))
+        ln.set('w', '28575')  # line width
+        solidFill = etree.SubElement(ln, qn('a:solidFill'))
+        srgbClr = etree.SubElement(solidFill, qn('a:srgbClr'))
+        srgbClr.set('val', 'FF0000')  # red color for line
+    
+    # Add axes IDs to line chart (must match area chart axes)
+    for axId in areaChart.findall('.//c:axId', namespaces={
+        'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+    }):
+        new_axId = etree.SubElement(lineChart, qn('c:axId'))
+        new_axId.set('val', axId.get('val'))
+    
+    # Ensure proper smooth line
+    smooth = etree.SubElement(lineChart, qn('c:smooth'))
+    smooth.set('val', '0')
+    
+    return chart_element
+
+# Modify the chart
+modified_chart = create_combo_chart(chart_element)
+
+# Save the modified presentation
+prs.save('combo_chart.pptx')
+
+print("\n" + "="*50)
+print("Modified Chart XML Structure (showing key elements):")
+print("="*50)
+
+# Print modified structure focusing on chart types
+plotArea = chart_element.find('.//c:plotArea', namespaces={
+    'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+})
+
+print("\nChart types in plot area:")
+for child in plotArea:
+    tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+    if 'Chart' in tag:
+        print(f"  - {tag}")
+        # Count series in each chart type
+        series_count = len(child.findall('.//c:ser', namespaces={
+            'c': 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+        }))
+        print(f"    Series count: {series_count}")
+
+print(f"\nCombo chart created successfully!")
+print(f"- 10 stacked area series")
+print(f"- 1 line series with markers")
+print(f"Files saved: 'initial_chart.pptx' and 'combo_chart.pptx'")
+
+# Additional function to further customize the chart
+def customize_chart_appearance(prs, slide_index=0):
+    """Additional customization for better appearance"""
+    slide = prs.slides[slide_index]
+    chart_shape = None
+    
+    for shape in slide.shapes:
+        if shape.has_chart:
+            chart_shape = shape
+            break
+    
+    if chart_shape:
+        chart = chart_shape.chart
+        
+        # Set chart title
+        chart.has_title = True
+        chart.chart_title.text_frame.text = "Combo Chart: 10 Stacked Areas + 1 Line"
+        
+        # Customize axes
+        category_axis = chart.category_axis
+        value_axis = chart.value_axis
+        
+        category_axis.has_title = True
+        category_axis.axis_title.text_frame.text = "Months"
+        
+        value_axis.has_title = True
+        value_axis.axis_title.text_frame.text = "Values"
+        
+        # Set value axis scale
+        value_axis.maximum_scale = 500
+        value_axis.minimum_scale = 0
+        value_axis.major_unit = 50
+
+# Apply additional customization
+customize_chart_appearance(prs)
+prs.save('combo_chart_final.pptx')
+
+print("\nFinal customized chart saved as 'combo_chart_final.pptx'")
