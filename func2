@@ -1,0 +1,121 @@
+# Make sure these imports are at the top of your script
+import streamlit as st
+import pandas as pd
+import numpy as np
+from pptx.chart.data import CategoryChartData
+from pptx.dml.color import RGBColor
+from pptx.util import Pt
+from pptx.enum.chart import XL_MARKER_STYLE
+from pptx.enum.dml import MSO_LINE_DASH_STYLE
+
+# Define your color palettes globally or where this function can access them
+ALADDIN_COLORS_HEX = [
+    '#0088C5', '#FFCE00', '#FF4713', '#FC9FAF', '#9E79D9', '#F4B223',
+]
+EXTENDED_COLORS_HEX = ALADDIN_COLORS_HEX + [
+    '#FFB194', '#F2A900', '#FFE67F', '#98D7BE', '#0088C5',
+    '#00573C', '#CDB9E6', '#9062BC', '#6E3FA3', '#FFC8CD',
+    '#C8005B', '#990012'
+]
+PPT_EXTENDED_RGB_COLORS = [RGBColor.from_string(hex_color.lstrip('#')) for hex_color in EXTENDED_COLORS_HEX]
+
+def update_chart_with_data(chart, df, chart_name_for_logging=""):
+    """
+    Final version: Updates chart data and applies specific styling based on chart name.
+    Relies on the PowerPoint template to define the fundamental series types (Area, Line, etc.).
+    """
+    # 1. Update Chart Data
+    chart_data_obj = CategoryChartData()
+    chart_data_obj.categories = [str(cat) for cat in df.iloc[:, 0].tolist()]
+    
+    for col_idx in range(1, len(df.columns)):
+        series_name_from_df = df.columns[col_idx]
+        series_values_raw = df.iloc[:, col_idx].tolist()
+        
+        processed_values = [
+            float(val) if pd.notna(val) else None
+            for val in pd.to_numeric(series_values_raw, errors='coerce')
+        ]
+        chart_data_obj.add_series(series_name_from_df, processed_values)
+
+    chart.replace_data(chart_data_obj)
+
+    # 2. Apply Styling
+    if not hasattr(chart, 'series'):
+        return
+
+    area_series_color_index = 0
+    for i, series_obj in enumerate(chart.series):
+        series_name = series_obj.name
+        
+        # --- Styling for cht_aggregate_nav ---
+        if chart_name_for_logging == "Aggregate NAV Target":
+            color = PPT_EXTENDED_RGB_COLORS[i % len(PPT_EXTENDED_RGB_COLORS)]
+            # Apply Line with Marker styling to both series in this chart
+            if series_obj.format.line:
+                series_obj.format.line.color.rgb = color
+                series_obj.format.line.width = Pt(2.0)
+            if hasattr(series_obj, 'marker') and series_obj.marker:
+                series_obj.marker.style = XL_MARKER_STYLE.CIRCLE
+                series_obj.marker.size = 5
+                series_obj.marker.format.fill.solid()
+                series_obj.marker.format.fill.fore_color.rgb = color
+                series_obj.marker.format.line.color.rgb = color
+
+        # --- Styling for cht_nav_forecast ---
+        elif chart_name_for_logging == "NAV Forecast (Absolute NAV & Target Line)":
+            if series_name == 'Target NAV (Line)':
+                # Line with Marker styling for Target NAV
+                color = RGBColor.from_string("0A0A0A") # Black
+                if series_obj.format.line:
+                    series_obj.format.line.color.rgb = color
+                    series_obj.format.line.width = Pt(2.0)
+                if hasattr(series_obj, 'marker') and series_obj.marker:
+                    series_obj.marker.style = XL_MARKER_STYLE.CIRCLE
+                    series_obj.marker.size = 5
+                    series_obj.marker.format.fill.solid()
+                    series_obj.marker.format.fill.fore_color.rgb = color
+            else:
+                # Stacked Area styling for all other series (AssetClass_Vintage)
+                color = PPT_EXTENDED_RGB_COLORS[area_series_color_index % len(PPT_EXTENDED_RGB_COLORS)]
+                if series_obj.format.fill:
+                    series_obj.format.fill.solid()
+                    series_obj.format.fill.fore_color.rgb = color
+                if series_obj.format.line: # Border for the area
+                    series_obj.format.line.width = Pt(0.75)
+                if hasattr(series_obj, 'marker'): # Ensure no markers on areas
+                    series_obj.marker.style = XL_MARKER_STYLE.NONE
+                area_series_color_index += 1
+
+        # --- Styling for cht_cashflows ---
+        elif chart_name_for_logging == "Cashflows Plot":
+            if series_name == 'Contributions':
+                color = RGBColor.from_string("FF4713") # Red/Orange
+                if series_obj.format.fill: series_obj.format.fill.solid(); series_obj.format.fill.fore_color.rgb = color
+                if hasattr(series_obj, 'marker'): series_obj.marker.style = XL_MARKER_STYLE.NONE
+            elif series_name == 'Distributions':
+                color = RGBColor.from_string("0088C5") # Blue
+                if series_obj.format.fill: series_obj.format.fill.solid(); series_obj.format.fill.fore_color.rgb = color
+                if hasattr(series_obj, 'marker'): series_obj.marker.style = XL_MARKER_STYLE.NONE
+            elif series_name == 'Cumulative Net Cashflow':
+                color = RGBColor.from_string("FFCE00") # Yellow/Gold
+                if series_obj.format.line: series_obj.format.line.color.rgb = color; series_obj.format.line.width = Pt(2.0)
+                if hasattr(series_obj, 'marker'): series_obj.marker.style = XL_MARKER_STYLE.CIRCLE
+            elif series_name == 'Liquidity Limit':
+                color = RGBColor.from_string("A9A9A9") # Dark Gray
+                if series_obj.format.line:
+                    series_obj.format.line.color.rgb = color; series_obj.format.line.width = Pt(1.5)
+                    series_obj.format.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+                if hasattr(series_obj, 'marker'): series_obj.marker.style = XL_MARKER_STYLE.NONE
+        
+        # --- Default Styling for other charts (like cht_sub_alloc_pm) ---
+        else:
+            color = PPT_EXTENDED_RGB_COLORS[area_series_color_index % len(PPT_EXTENDED_RGB_COLORS)]
+            if series_obj.format.fill: # Assumes Bar/Area by default
+                series_obj.format.fill.solid()
+                series_obj.format.fill.fore_color.rgb = color
+            if series_obj.format.line:
+                series_obj.format.line.width = Pt(0.75)
+            if hasattr(series_obj, 'marker'):
+                 series_obj.marker.style = XL_MARKER_STYLE.NONE
+            area_series_color_index += 1
