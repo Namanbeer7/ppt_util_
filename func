@@ -1,0 +1,47 @@
+def prepare_asset_class_vintage_pivot(V_df_data, value_column='nav'):
+    """
+    Helper to create a pivot table with 'AssetClass_Vintage' series.
+    UPDATED: This version filters out any series (columns) that are zero across all periods.
+    """
+    if not isinstance(V_df_data, pd.DataFrame) or V_df_data.empty:
+        st.warning(f"V_df for {value_column} pivot is empty.")
+        return pd.DataFrame(columns=['Period'])
+    
+    required_cols = {'asset_class', 'vintage', 'period', value_column}
+    if not required_cols.issubset(V_df_data.columns):
+        missing = required_cols - set(V_df_data.columns)
+        st.error(f"V_df missing columns for pivot: {missing}")
+        return pd.DataFrame(columns=['Period'])
+
+    V_df_copy = V_df_data.copy()
+    V_df_copy['combined_series'] = V_df_copy['asset_class'].astype(str) + '_' + V_df_copy['vintage'].astype(str)
+    
+    # Step 1: Create the full pivot table with all series
+    pivot_df = V_df_copy.pivot_table(
+        index='period', columns='combined_series', values=value_column,
+        aggfunc='sum', fill_value=0
+    ).reset_index()
+    pivot_df.rename(columns={'period': 'Period'}, inplace=True)
+    
+    # --- NEW: Step 2: Filter out columns that are entirely zero ---
+    # Identify only the data columns (not the 'Period' category column)
+    value_columns = [col for col in pivot_df.columns if col != 'Period']
+    
+    # Calculate the sum of each data column
+    column_sums = pivot_df[value_columns].sum()
+    
+    # Identify columns where the absolute sum is less than a small number (to handle floating point math)
+    zero_sum_columns = column_sums[column_sums.abs() < 1e-9].index.tolist()
+    
+    if zero_sum_columns:
+        st.write(f"Filtering out {len(zero_sum_columns)} zero-value series: {zero_sum_columns[:5]}...") # Log what's being removed
+        # Drop these columns from the DataFrame
+        pivot_df_filtered = pivot_df.drop(columns=zero_sum_columns)
+    else:
+        pivot_df_filtered = pivot_df # No columns to filter
+
+    # Step 3: Sort the remaining columns for consistent ordering
+    remaining_value_cols = sorted([col for col in pivot_df_filtered.columns if col != 'Period'])
+    final_df = pivot_df_filtered[['Period'] + remaining_value_cols]
+    
+    return final_df
